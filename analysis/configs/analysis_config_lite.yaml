@@ -1,0 +1,65 @@
+input_dir: /mnt/data/gapfill_outputs_art_v4_lite/analysis_ready_segments
+output_dir: /mnt/data/analysis_outputs_art_lite
+segment_glob: segment_*_analysis_ready.csv
+time_col: timestamp
+required_flux_vars:
+- co2_flux
+- H
+required_met_vars:
+- air_temperature
+- RH
+- VPD
+- wind_speed
+optional_flux_vars:
+- LE
+- ET
+- RN
+optional_met_vars:
+- u_star
+- TKE
+psd:
+  fs_hz: 0.0005555555555555556
+  max_nperseg: 256
+fi:
+  window_hours: 72
+  step_hours: 12
+  samples_per_hour: 2
+  epsilon: 1.0e-12
+  multivariate_bins: 5
+  min_coverage: 0.8
+graph:
+  corr_threshold: 0.3
+abrupt:
+  k_mad: 3
+regimes:
+  k: 3
+  features:
+  - FI
+  - mean_connectivity
+  - link_density
+pca_groups:
+  Flux variables:
+  - co2_flux
+  - H
+  - LE
+  - ET
+  - RN
+  Meteorological variables:
+  - air_temperature
+  - RH
+  - VPD
+  - wind_speed
+  - u_star
+  - TKE
+  All variables:
+  - co2_flux
+  - H
+  - LE
+  - ET
+  - RN
+  - air_temperature
+  - RH
+  - VPD
+  - wind_speed
+  - u_star
+  - TKE

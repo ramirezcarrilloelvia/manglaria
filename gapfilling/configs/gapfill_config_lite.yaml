@@ -1,0 +1,71 @@
+input_csv: /mnt/data/carbon_flux_eddy.csv
+output_dir: /mnt/data/gapfill_outputs_art_config_lite
+time_col: timestamp
+freq_minutes: 30
+target_cols:
+- co2_flux
+- H
+- LE
+- ET
+structure_vars:
+- co2_flux
+- H
+- LE
+- ET
+predictor_map:
+  co2_flux:
+  - H
+  - LE
+  - ET
+  - air_temperature
+  - RH
+  - VPD
+  - wind_speed
+  - u_star
+  - daytime
+  - DOY
+  H:
+  - LE
+  - co2_flux
+  - ET
+  - air_temperature
+  - RH
+  - VPD
+  - wind_speed
+  - u_star
+  - daytime
+  - DOY
+  LE:
+  - H
+  - co2_flux
+  - ET
+  - air_temperature
+  - RH
+  - VPD
+  - wind_speed
+  - u_star
+  - daytime
+  - DOY
+  ET:
+  - H
+  - LE
+  - co2_flux
+  - air_temperature
+  - RH
+  - VPD
+  - wind_speed
+  - u_star
+  - daytime
+  - DOY
+max_interp_gap_steps: 4
+max_rf_gap_steps: 16
+structural_gap_steps: 1700
+min_segment_points: 12
+rf_params:
+  n_estimators: 12
+  max_depth: 8
+  min_samples_leaf: 8
+  random_state: 42
+  n_jobs: -1
+n_validation_trials: 4
+fig_dpi: 220

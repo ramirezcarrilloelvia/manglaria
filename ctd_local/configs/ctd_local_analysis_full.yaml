@@ -1,0 +1,37 @@
+input_dir: /mnt/data/gapfill_outputs_ctd_local_full/analysis_ready_segments
+output_dir: /mnt/data/analysis_outputs_ctd_local_full
+segment_glob: segment_*_analysis_ready.csv
+time_col: timestamp
+required_core_vars:
+- press
+- temp
+optional_core_vars:
+- spec_cond
+psd:
+  fs_hz: 0.0011111111111111111
+  max_nperseg: 512
+fi:
+  window_hours: 72
+  step_hours: 6
+  samples_per_hour: 4
+  epsilon: 1.0e-12
+  multivariate_bins: 6
+  min_coverage: 0.85
+graph:
+  corr_threshold: 0.3
+abrupt:
+  k_mad: 3
+regimes:
+  k: 3
+  features:
+  - FI
+  - mean_connectivity
+  - link_density
+pca_groups:
+  CTD variables:
+  - press
+  - temp
+  - spec_cond
+  Core variables:
+  - press
+  - temp
