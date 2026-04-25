@@ -1,5 +1,5 @@
-input_csv: /mnt/data/ctd_local.csv
-output_dir: /mnt/data/gapfill_outputs_ctd_local_lite
+input_csv: data/ctd_local.csv
+output_dir: output/ctd_local_lite
 time_col: timestamp
 freq_minutes: 15
 target_cols:

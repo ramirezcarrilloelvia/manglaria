@@ -1,5 +1,5 @@
-input_csv: /mnt/data/carbon_flux_eddy.csv
-output_dir: /mnt/data/gapfill_outputs_art_config_full
+input_csv: data/carbon_flux_eddy.csv
+output_dir: output/gapfilling_full
 time_col: timestamp
 freq_minutes: 30
 target_cols:

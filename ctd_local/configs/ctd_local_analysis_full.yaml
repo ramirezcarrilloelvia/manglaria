@@ -1,6 +1,6 @@
-input_dir: /mnt/data/gapfill_outputs_ctd_local_full/analysis_ready_segments
-output_dir: /mnt/data/analysis_outputs_ctd_local_full
-segment_glob: segment_*_analysis_ready.csv
+input_dir: output/ctd_local_full/analysis_ready_segments
+output_dir: output/ctd_local_analysis_full
+segment_glob: "segment_*_analysis_ready.csv"
 time_col: timestamp
 required_core_vars:
 - press

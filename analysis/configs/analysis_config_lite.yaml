@@ -1,5 +1,5 @@
-input_dir: /mnt/data/gapfill_outputs_art_v4_lite/analysis_ready_segments
-output_dir: /mnt/data/analysis_outputs_art_lite
+input_dir: output/gapfilling/analysis_ready_segments
+output_dir: output/analysis_lite
 segment_glob: segment_*_analysis_ready.csv
 time_col: timestamp
 required_flux_vars:

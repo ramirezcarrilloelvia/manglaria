@@ -1,6 +1,6 @@
-input_dir: /mnt/data/gapfill_outputs_art_v4_lite/analysis_ready_segments
-output_dir: /mnt/data/analysis_outputs_art_full
-segment_glob: segment_*_analysis_ready.csv
+input_dir: output/gapfilling_full/analysis_ready_segments
+output_dir: output/analysis_full
+segment_glob: "segment_*_analysis_ready.csv"
 time_col: timestamp
 required_flux_vars:
 - co2_flux
