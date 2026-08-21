@@ -15,6 +15,7 @@ binning:
   condition_bins: 2
 
 transition:
+  sample_minutes: 15
   lag_steps: 4
   min_row_count: 20
   pseudocount: 0.0
