@@ -1,15 +1,6 @@
 name: Elkhorn tolerance workhorse
 
 on:
-  push:
-    branches:
-      - tolerance-landscape-elkhorn
-    paths:
-      - 'analysis/prepare_elkhorn_nerrs.py'
-      - 'analysis/tolerance_landscape.py'
-      - 'analysis/run_tolerance_landscape.py'
-      - 'analysis/configs/tolerance_landscape_elkhorn.yaml'
-      - '.github/workflows/elkhorn_tolerance_workhorse.yml'
   pull_request:
     branches:
       - main
