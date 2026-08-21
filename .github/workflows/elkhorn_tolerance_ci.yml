@@ -1,0 +1,62 @@
+name: Elkhorn tolerance CI
+
+on:
+  pull_request:
+    branches:
+      - tl-ci-base
+  workflow_dispatch:
+
+jobs:
+  run-elkhorn:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install analysis dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas scipy scikit-learn matplotlib pyyaml tabulate pytest
+
+      - name: Run Tolerance Landscape tests
+        run: pytest -q analysis/tests
+
+      - name: Download and audit Elkhorn NERR archives
+        run: python analysis/prepare_elkhorn_nerrs.py --start-year 2007 --end-year 2024 --out-dir output/elkhorn_data_audit
+
+      - name: Run South Marsh Tolerance Landscape analysis
+        run: python -m analysis.run_tolerance_landscape --config analysis/configs/tolerance_landscape_elkhorn.yaml
+
+      - name: Build compact screening report
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+          out = Path('output')
+          q = pd.read_csv(out/'elkhorn_data_audit'/'elkhorn_qaqc_station_summary.csv')
+          y = pd.read_csv(out/'elkhorn_data_audit'/'elkhorn_qaqc_by_year.csv')
+          w = pd.read_csv(out/'tolerance_landscape_elkhorn'/'tolerance_landscape_windows.csv')
+          p = pd.read_csv(out/'tolerance_landscape_elkhorn'/'state_similar_architecture_different.csv')
+          lines = ['# Elkhorn empirical screening', '', '## Station QA/QC summary', '', q.to_markdown(index=False), '', '## Per-year usable coverage', '', y[[c for c in ['station','year','usable_coverage_pct','do_finite_pct','depth_finite_pct','depth_source','hypoxia_lt3_n'] if c in y.columns]].to_markdown(index=False), '', '## Tolerance Landscape window summary', '']
+          cols = [c for c in ['conditioned_tv_to_reference','marginal_tv_to_reference','aliasing_gap','joint_support_coverage','fixed_nu_weighted_coverage','fully_evaluable_state_weight','expected_do_1step_mg_l','viable_mass','terminal_entropy','effective_terminal_states','state_mean'] if c in w.columns]
+          if cols:
+              lines.append(w[cols].describe().T.to_markdown())
+          lines += ['', f'Number of valid TL windows: {len(w)}', f'Number of direct same-state/different-architecture pairs: {len(p)}']
+          Path(out/'ELKHORN_SCREENING_REPORT.md').write_text('\n'.join(lines), encoding='utf-8')
+          PY
+
+      - name: Upload empirical outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: elkhorn-tolerance-workhorse-corrected
+          path: |
+            output/elkhorn_data_audit/*.csv
+            output/tolerance_landscape_elkhorn/*.csv
+            output/tolerance_landscape_elkhorn/*.json
+            output/ELKHORN_SCREENING_REPORT.md
+          if-no-files-found: error
+          retention-days: 30
