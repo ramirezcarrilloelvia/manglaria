@@ -9,6 +9,7 @@ import pandas as pd
 import yaml
 
 from analysis import tolerance_landscape as tl
+from analysis import tolerance_landscape_empirical as emp
 
 
 def load_config(path: str | Path) -> dict:
@@ -17,13 +18,7 @@ def load_config(path: str | Path) -> dict:
 
 
 def _filter_primary_rows(df: pd.DataFrame, flag_cols, accepted_flags) -> pd.DataFrame:
-    """Keep only declared primary-analysis rows before binning/evaluation.
-
-    Filtering before common-bin construction ensures flagged values do not
-    influence the generator geometry, reference state distribution, or payoff
-    representatives. Timestamp continuity is checked separately for every
-    transition, so filtering cannot bridge across excluded observations.
-    """
+    """Keep only declared primary-analysis rows before binning/evaluation."""
     if not flag_cols:
         return df.copy()
     accepted = set(map(str, accepted_flags))
@@ -82,8 +77,6 @@ def _strict_transition_preparer(expected_sample_minutes: float):
         t1 = work[time_col].iloc[lag_steps:].reset_index(drop=True)
         dt_minutes = (t1 - t0).dt.total_seconds().div(60.0)
         expected = expected_sample_minutes * int(lag_steps)
-        # One-second tolerance is ample for nominal 15-min SWMP timestamps while
-        # refusing to create transitions across QA/QC exclusions or data gaps.
         valid_dt = np.isclose(dt_minutes.to_numpy(), expected, atol=1.0 / 60.0, rtol=0.0)
 
         out = pd.DataFrame({
@@ -118,8 +111,8 @@ def run(config_path: str | Path):
     flag_cols = obs_cfg.get("flag_cols") or None
     accepted_flags = obs_cfg.get("accepted_flags", ["observed"])
 
-    # Primary geometry and evaluation context are estimated only from rows that
-    # satisfy the declared QA/QC rule.
+    # Flagged rows cannot influence bin edges, reference state weights or
+    # generator estimation in the primary run.
     df_primary = _filter_primary_rows(df, flag_cols, accepted_flags)
     ref_primary = _filter_primary_rows(ref, flag_cols, accepted_flags)
 
@@ -127,20 +120,25 @@ def run(config_path: str | Path):
         [df_primary[[state_col, *condition_cols]], ref_primary[[state_col, *condition_cols]]],
         ignore_index=True,
     )
-    state_edges, condition_edges = tl.build_common_edges(
-        pooled,
-        state_col=state_col,
-        condition_cols=condition_cols,
-        state_bins=int(cfg["binning"]["state_bins"]),
-        condition_bins=cfg["binning"]["condition_bins"],
+    threshold = float(cfg["viability"]["oxygen_threshold_mg_l"])
+    state_edges = emp.threshold_aware_state_edges(
+        pooled[state_col].to_numpy(),
+        n_bins=int(cfg["binning"]["state_bins"]),
+        threshold=threshold,
     )
+    condition_edges = {}
+    cond_cfg = cfg["binning"]["condition_bins"]
+    for col in condition_cols:
+        n_bins = cond_cfg[col] if isinstance(cond_cfg, dict) else cond_cfg
+        condition_edges[col] = tl.quantile_edges(pooled[col].to_numpy(), int(n_bins))
 
-    # Patch the internal transition constructor for this empirical run so that
-    # row filtering can never turn a temporal gap into a false Markov step.
+    # Prevent QA exclusions or missing timestamps from being bridged into a
+    # false one-hour Markov transition.
     sample_minutes = float(cfg["transition"].get("sample_minutes", 15.0))
     tl._prepare_transition_table = _strict_transition_preparer(sample_minutes)
 
-    metrics = tl.run_windowed_tolerance_analysis(
+    min_regime_coverage = float(cfg.get("evaluation", {}).get("min_regime_coverage", 0.90))
+    metrics, generators, context = emp.run_empirical_windowed_analysis(
         df_primary,
         time_col=time_col,
         state_col=state_col,
@@ -152,14 +150,23 @@ def run(config_path: str | Path):
         min_row_count=int(cfg["transition"]["min_row_count"]),
         window_days=float(cfg["windows"]["window_days"]),
         step_days=float(cfg["windows"]["step_days"]),
-        admissible_threshold=float(cfg["viability"]["oxygen_threshold_mg_l"]),
+        admissible_threshold=threshold,
         horizon_steps=int(cfg["viability"]["horizon_steps"]),
-        observed_flag_cols=flag_cols,
-        accepted_flags=accepted_flags,
+        min_regime_coverage=min_regime_coverage,
     )
     metrics.to_csv(output_dir / "tolerance_landscape_windows.csv", index=False)
 
-    pairs = tl.find_state_similar_architecture_different(metrics)
+    pair_cfg = cfg.get("falsification", {})
+    pairs = emp.find_direct_state_similar_architecture_different(
+        metrics,
+        generators,
+        nu=context["nu_ref"],
+        state_weights=context["mu_ref"],
+        state_tolerance=float(pair_cfg.get("state_tolerance_mg_l", 0.25)),
+        min_architecture_distance=float(pair_cfg.get("min_direct_conditioned_tv", 0.15)),
+        min_separation_days=float(pair_cfg.get("min_pair_separation_days", 30.0)),
+        max_pairs=int(pair_cfg.get("max_pairs", 50)),
+    )
     pairs.to_csv(output_dir / "state_similar_architecture_different.csv", index=False)
 
     edges_payload = {
@@ -168,9 +175,18 @@ def run(config_path: str | Path):
             k: [None if not pd.notna(v) or np.isinf(v) else float(v) for v in arr]
             for k, arr in condition_edges.items()
         },
+        "oxygen_threshold_is_explicit_state_edge": bool(
+            np.any(np.isclose(state_edges[np.isfinite(state_edges)], threshold))
+        ),
+        "oxygen_threshold_mg_l": threshold,
         "transition_sample_minutes": sample_minutes,
         "transition_lag_steps": int(cfg["transition"]["lag_steps"]),
         "transition_gap_bridging_allowed": False,
+        "fixed_nu_min_regime_coverage": min_regime_coverage,
+        "reference_nu": {str(k): float(v) for k, v in context["nu_ref"].items()},
+        "reference_state_weights": [float(v) for v in context["mu_ref"]],
+        "state_representatives_mg_l": [None if not np.isfinite(v) else float(v) for v in context["state_representatives"]],
+        "admissible_state_mask": [bool(v) for v in context["admissible_mask"]],
     }
     with open(output_dir / "binning.json", "w", encoding="utf-8") as f:
         json.dump(edges_payload, f, indent=2)
@@ -187,6 +203,7 @@ def run(config_path: str | Path):
     print(f"Tolerance-landscape analysis complete: {output_dir}")
     print(f"Primary rows: {len(df_primary):,}; reference rows: {len(ref_primary):,}")
     print(f"Valid observational windows: {len(metrics):,}")
+    print(f"Direct same-state/different-architecture pairs: {len(pairs):,}")
 
 
 if __name__ == "__main__":
