@@ -2,14 +2,9 @@ from __future__ import annotations
 
 """Download, harmonize and audit Elkhorn Slough NERR water-quality archives.
 
-The script is deliberately conservative for the Tolerance Landscapes workhorse:
-- it downloads the public yearly CDMO archive files;
-- it never imputes primary-analysis values;
-- it preserves raw QA/QC flags/codes when available;
-- it creates a canonical 15-min table with DO, temperature, salinity and depth;
-- it reports coverage and gap structure before any generator analysis.
-
-Raw archive files are not intended to be committed to the repository.
+Primary-analysis values are never imputed here. The script preserves the raw
+parameter QA/QC flags, builds a conservative observed-only mask, records gap
+structure, and writes canonical tables for the Tolerance Landscapes workhorse.
 """
 
 from pathlib import Path
@@ -28,7 +23,6 @@ STATIONS = {
     "north_marsh": "elknmwq",
     "vierra_mouth": "elkvmwq",
 }
-
 ACCEPTED_PRIMARY_FLAGS = {0, 5}
 ACCEPTED_CDEPTH_FLAGS = {0, 3, 5}
 
@@ -43,10 +37,10 @@ def _column_map(df: pd.DataFrame) -> dict[str, str]:
 
 def _pick(df: pd.DataFrame, aliases: list[str]) -> str | None:
     cmap = _column_map(df)
-    for a in aliases:
-        key = _norm(a)
-        if key in cmap:
-            return cmap[key]
+    for alias in aliases:
+        col = cmap.get(_norm(alias))
+        if col is not None:
+            return col
     return None
 
 
@@ -55,7 +49,7 @@ def _read_csv(path: Path) -> pd.DataFrame:
         try:
             return pd.read_csv(path, low_memory=False, encoding=enc)
         except UnicodeDecodeError:
-            continue
+            pass
     return pd.read_csv(path, low_memory=False, encoding_errors="replace")
 
 
@@ -64,17 +58,17 @@ def _download(url: str, path: Path, timeout: int = 90) -> None:
     if path.exists() and path.stat().st_size > 1000:
         return
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 tolerance-landscape-research"})
-    with urllib.request.urlopen(req, timeout=timeout) as r, open(path, "wb") as f:
-        shutil.copyfileobj(r, f)
+    with urllib.request.urlopen(req, timeout=timeout) as response, open(path, "wb") as handle:
+        shutil.copyfileobj(response, handle)
     if path.stat().st_size < 1000:
         raise RuntimeError(f"Downloaded file is unexpectedly small: {url}")
 
 
-def _parse_flag_number(v) -> float:
-    if pd.isna(v):
+def _parse_flag_number(value) -> float:
+    if pd.isna(value):
         return np.nan
-    m = re.match(r"\s*(-?\d+)", str(v))
-    return float(m.group(1)) if m else np.nan
+    match = re.match(r"\s*(-?\d+)", str(value))
+    return float(match.group(1)) if match else np.nan
 
 
 def _flag_ok(series: pd.Series | None, *, allow_calculated: bool = False) -> pd.Series:
@@ -94,6 +88,18 @@ def _timestamp(df: pd.DataFrame) -> pd.Series:
     if date_col and time_col:
         return pd.to_datetime(df[date_col].astype(str) + " " + df[time_col].astype(str), errors="coerce")
     raise ValueError(f"Could not identify timestamp column. Columns={list(df.columns)}")
+
+
+def _event_text(df: pd.DataFrame) -> pd.Series:
+    """Collapse all flag/code fields to text without depending on pandas agg semantics."""
+    flag_cols = [c for c in df.columns if _norm(c).startswith("f")]
+    if not flag_cols:
+        return pd.Series("", index=df.index, dtype="object")
+    subset = df[flag_cols]
+    return subset.apply(
+        lambda row: "|".join(str(value) for value in row.tolist() if pd.notna(value)),
+        axis=1,
+    )
 
 
 def _canonicalize(df: pd.DataFrame, station_name: str, station_code: str, year: int) -> tuple[pd.DataFrame, dict]:
@@ -135,23 +141,18 @@ def _canonicalize(df: pd.DataFrame, station_name: str, station_code: str, year: 
         "do_mgl": df[f_do] if f_do else None,
         "depth": df[f_depth] if f_depth else None,
     }
-    for key, ser in raw_flags.items():
-        out[f"raw_flag_{key}"] = ser.astype(str) if ser is not None else ""
+    for key, series in raw_flags.items():
+        out[f"raw_flag_{key}"] = series.astype(str) if series is not None else ""
+    out["raw_flag_record"] = df[f_record].astype(str) if f_record else ""
 
-    if f_record:
-        out["raw_flag_record"] = df[f_record].astype(str)
-    else:
-        out["raw_flag_record"] = ""
-
-    # Parameter-specific primary QA/QC. Flag 3 is accepted only for corrected depth.
     ok_components = []
     missing_flag_cols = []
-    for key, ser in raw_flags.items():
-        if ser is None:
+    for key, series in raw_flags.items():
+        if series is None:
             missing_flag_cols.append(key)
             ok = pd.Series(False, index=out.index)
         else:
-            ok = _flag_ok(ser, allow_calculated=(key == "depth" and cdepth_col is not None))
+            ok = _flag_ok(series, allow_calculated=(key == "depth" and cdepth_col is not None))
             ok.index = out.index
         out[f"qa_ok_{key}"] = ok.to_numpy()
         ok_components.append(ok.to_numpy())
@@ -160,15 +161,9 @@ def _canonicalize(df: pd.DataFrame, station_name: str, station_code: str, year: 
     qa_all = np.logical_and.reduce(ok_components) if ok_components else np.zeros(len(out), dtype=bool)
     out["qa_status"] = np.where(numeric_ok & qa_all, "observed", "excluded")
 
-    # Preserve independently recorded event/comment codes when present anywhere in flag columns.
-    flag_cols = [c for c in df.columns if _norm(c).startswith("f")]
-    if flag_cols:
-        flag_text = df[flag_cols].astype(str).agg("|".join, axis=1)
-        for code in ["CDA", "CRE", "CWE", "CAB", "CFK", "CLT"]:
-            out[f"event_{code.lower()}"] = flag_text.str.contains(code, regex=False, na=False).to_numpy()
-    else:
-        for code in ["cda", "cre", "cwe", "cab", "cfk", "clt"]:
-            out[f"event_{code}"] = False
+    flag_text = _event_text(df)
+    for code in ["CDA", "CRE", "CWE", "CAB", "CFK", "CLT"]:
+        out[f"event_{code.lower()}"] = flag_text.str.contains(code, regex=False, na=False).to_numpy()
 
     out = out.dropna(subset=["timestamp"]).sort_values("timestamp")
     out = out.drop_duplicates(subset=["timestamp"], keep="first").reset_index(drop=True)
@@ -201,10 +196,10 @@ def _canonicalize(df: pd.DataFrame, station_name: str, station_code: str, year: 
         "n_gaps_gt_24h": gap_gt_24h,
         "hypoxia_lt3_n": int((out.loc[usable, "do_mgl"] < 3.0).sum()),
         "hypoxia_lt2_n": int((out.loc[usable, "do_mgl"] < 2.0).sum()),
-        "cda_flag_n": int(out.get("event_cda", pd.Series(False, index=out.index)).sum()),
-        "rain_flag_n": int(out.get("event_cre", pd.Series(False, index=out.index)).sum()),
-        "weather_flag_n": int(out.get("event_cwe", pd.Series(False, index=out.index)).sum()),
-        "bloom_flag_n": int(out.get("event_cab", pd.Series(False, index=out.index)).sum()),
+        "cda_flag_n": int(out["event_cda"].sum()),
+        "rain_flag_n": int(out["event_cre"].sum()),
+        "weather_flag_n": int(out["event_cwe"].sum()),
+        "bloom_flag_n": int(out["event_cab"].sum()),
         "missing_flag_columns": "|".join(missing_flag_cols),
         "depth_source": str(depth_col),
     }
@@ -216,7 +211,7 @@ def run(start_year: int, end_year: int, out_dir: Path) -> None:
     canonical_dir = out_dir / "canonical"
     canonical_dir.mkdir(parents=True, exist_ok=True)
     summaries = []
-    station_frames: dict[str, list[pd.DataFrame]] = {k: [] for k in STATIONS}
+    station_frames: dict[str, list[pd.DataFrame]] = {key: [] for key in STATIONS}
 
     for station_name, station_code in STATIONS.items():
         for year in range(start_year, end_year + 1):
@@ -230,12 +225,7 @@ def run(start_year: int, end_year: int, out_dir: Path) -> None:
                 station_frames[station_name].append(canon)
                 summaries.append(summary)
             except Exception as exc:
-                summaries.append({
-                    "station": station_name,
-                    "station_code": station_code,
-                    "year": year,
-                    "error": repr(exc),
-                })
+                summaries.append({"station": station_name, "station_code": station_code, "year": year, "error": repr(exc)})
                 print(f"WARNING {station_code} {year}: {exc}")
 
     for station_name, frames in station_frames.items():
@@ -243,17 +233,17 @@ def run(start_year: int, end_year: int, out_dir: Path) -> None:
             continue
         full = pd.concat(frames, ignore_index=True).sort_values("timestamp").drop_duplicates("timestamp")
         full.to_csv(canonical_dir / f"{station_name}.csv", index=False)
-        observed = full[full["qa_status"].eq("observed")].copy()
-        observed.to_csv(canonical_dir / f"{station_name}_observed_only.csv", index=False)
+        full[full["qa_status"].eq("observed")].to_csv(
+            canonical_dir / f"{station_name}_observed_only.csv", index=False
+        )
 
     summary_df = pd.DataFrame(summaries)
     summary_df.to_csv(out_dir / "elkhorn_qaqc_by_year.csv", index=False)
 
     if not summary_df.empty and "usable_coverage_pct" in summary_df.columns:
-        agg = (
-            summary_df.dropna(subset=["usable_coverage_pct"])
-            .groupby(["station", "station_code"], as_index=False)
-            .agg(
+        valid = summary_df.dropna(subset=["usable_coverage_pct"])
+        if not valid.empty:
+            agg = valid.groupby(["station", "station_code"], as_index=False).agg(
                 years=("year", "count"),
                 median_usable_coverage_pct=("usable_coverage_pct", "median"),
                 min_usable_coverage_pct=("usable_coverage_pct", "min"),
@@ -263,10 +253,8 @@ def run(start_year: int, end_year: int, out_dir: Path) -> None:
                 max_gap_hours=("max_usable_gap_hours", "max"),
                 total_gaps_gt_24h=("n_gaps_gt_24h", "sum"),
             )
-        )
-        agg.to_csv(out_dir / "elkhorn_qaqc_station_summary.csv", index=False)
+            agg.to_csv(out_dir / "elkhorn_qaqc_station_summary.csv", index=False)
 
-    # Stable file names expected by the TL configuration.
     sm = canonical_dir / "south_marsh.csv"
     if sm.exists():
         target_dir = Path("data/elkhorn")
