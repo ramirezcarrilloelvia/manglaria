@@ -57,8 +57,11 @@ def _read_csv(path: Path) -> pd.DataFrame:
 def _flag_number(value) -> float:
     if pd.isna(value):
         return np.nan
-    match = re.match(r"\s*(-?\d+)", str(value))
-    return float(match.group(1)) if match else np.nan
+    # Archived SWMP CSVs commonly encode flags as strings such as <0>, <3>,
+    # or <-1>. Search for the signed integer rather than requiring it to be
+    # the first character.
+    match = re.search(r"-?\d+", str(value))
+    return float(match.group(0)) if match else np.nan
 
 
 def _timestamp(df: pd.DataFrame) -> pd.Series:
