@@ -10,21 +10,18 @@ condition_cols:
   - sal
   - depth
 
-# Common discretization across all windows is required for comparability.
 binning:
   state_bins: 6
   condition_bins: 2
 
-# 15-min data: lag_steps=4 corresponds to a 1-hour transition.
 transition:
   lag_steps: 4
   min_row_count: 20
   pseudocount: 0.0
 
-# Primary analysis uses observed values only. If gap-filled data are analyzed,
-# run them as a separate sensitivity analysis rather than silently mixing them.
 observed_only:
-  flag_cols: []
+  flag_cols:
+    - qa_status
   accepted_flags:
     - observed
 
@@ -34,12 +31,10 @@ windows:
 
 viability:
   oxygen_threshold_mg_l: 3.0
-  # With one-hour transitions, 24 steps = 24 h.
   horizon_steps: 24
   sensitivity_thresholds_mg_l: [2.0, 3.0, 4.0, 5.0]
   sensitivity_horizons_steps: [6, 12, 24, 48]
 
 complexity_bridge:
-  # Optional A-Frank-Analysis early-warning file.
   tmsi_csv: null
   merge_tolerance: 3D
