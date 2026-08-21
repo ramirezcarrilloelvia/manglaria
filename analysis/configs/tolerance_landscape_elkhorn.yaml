@@ -1,0 +1,52 @@
+analysis_mode: tolerance_landscape_elkhorn
+input_csv: data/elkhorn/south_marsh.csv
+reference_csv: data/elkhorn/south_marsh_reference.csv
+output_dir: output/tolerance_landscape_elkhorn
+
+time_col: timestamp
+state_col: do_mgl
+condition_cols:
+  - temp
+  - sal
+  - depth
+
+binning:
+  state_bins: 6
+  condition_bins: 2
+
+transition:
+  sample_minutes: 15
+  lag_steps: 4
+  min_row_count: 20
+  pseudocount: 0.0
+
+observed_only:
+  flag_cols:
+    - qa_status
+  accepted_flags:
+    - observed
+
+windows:
+  window_days: 60
+  step_days: 7
+
+evaluation:
+  # A candidate state row is evaluated under the fixed South Marsh reference
+  # perturbation law only when at least this fraction of nu_ref is supported.
+  min_regime_coverage: 0.90
+
+viability:
+  oxygen_threshold_mg_l: 3.0
+  horizon_steps: 24
+  sensitivity_thresholds_mg_l: [2.0, 3.0, 4.0, 5.0]
+  sensitivity_horizons_steps: [6, 12, 24, 48]
+
+falsification:
+  state_tolerance_mg_l: 0.25
+  min_direct_conditioned_tv: 0.15
+  min_pair_separation_days: 30
+  max_pairs: 50
+
+complexity_bridge:
+  tmsi_csv: null
+  merge_tolerance: 3D
