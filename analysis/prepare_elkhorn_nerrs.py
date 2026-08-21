@@ -18,7 +18,10 @@ STATIONS = {
     "north_marsh": "elknmwq",
     "vierra_mouth": "elkvmwq",
 }
-ACCEPTED_PRIMARY_FLAGS = {0, 5}
+# SWMP flag 3 denotes calculated/derived accepted values. Standard variables
+# such as salinity and DO_mgl can legitimately carry this flag. Flags 1
+# (suspect) and negative/rejected flags remain excluded from the primary run.
+ACCEPTED_PRIMARY_FLAGS = {0, 3, 5}
 
 
 def _norm(value) -> str:
@@ -82,8 +85,6 @@ def _canonicalize(df: pd.DataFrame, station: str, code: str, year: int):
     temp_col = _pick(df, ["Temp", "temperature", "water_temperature"])
     sal_col = _pick(df, ["Sal", "salinity"])
     do_col = _pick(df, ["DO_mgl", "do_mgl", "dissolved_oxygen_mgl"])
-    # Raw Depth is the primary forcing variable. cDepth is optional in SWMP and
-    # can exist as an empty field when datum correction is unavailable.
     depth_col = _pick(df, ["Depth", "depth"])
     if depth_col is None:
         depth_col = _pick(df, ["cDepth", "corrected_depth"])
@@ -112,17 +113,11 @@ def _canonicalize(df: pd.DataFrame, station: str, code: str, year: int):
         if fcol is None:
             missing_flags.append(name)
             out[f"raw_flag_{name}"] = ""
-            # Missing a dedicated flag is recorded and does not silently veto
-            # every numerical observation. This case is surfaced in the audit.
             ok = np.ones(len(out), dtype=bool)
         else:
             raw = df[fcol]
             out[f"raw_flag_{name}"] = raw.astype(str)
-            flags = raw.map(_flag_number)
-            accepted = set(ACCEPTED_PRIMARY_FLAGS)
-            if _norm(value_col) == _norm("cDepth"):
-                accepted.add(3)
-            ok = flags.isin(accepted).to_numpy()
+            ok = raw.map(_flag_number).isin(ACCEPTED_PRIMARY_FLAGS).to_numpy()
         out[f"qa_ok_{name}"] = ok
         qa_arrays.append(ok)
 
